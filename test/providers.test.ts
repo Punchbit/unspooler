@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openai } from "../src/providers/openai.js";
 import { gemini, nanoBanana } from "../src/providers/gemini.js";
 import { midjourney } from "../src/providers/midjourney.js";
+import { falVideoDuration } from "../src/providers/fal.js";
 import type { ImageGenerator } from "../src/types.js";
 
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]);
@@ -11,6 +12,19 @@ afterEach(() => {
   delete process.env.OPENAI_API_KEY;
   delete process.env.GEMINI_API_KEY;
   delete process.env.MIDJOURNEY_API_KEY;
+});
+
+describe("fal video duration", () => {
+  it("snaps Kling to the 5/10 second enum as strings", () => {
+    expect(falVideoDuration("fal-ai/kling-video/v2.1/standard/image-to-video", 3)).toBe("5");
+    expect(falVideoDuration("fal-ai/kling-video/v3/pro/image-to-video", 5)).toBe("5");
+    expect(falVideoDuration("fal-ai/kling-video/v2.1/standard/image-to-video", 8)).toBe("10");
+  });
+
+  it("leaves non-Kling models as numbers", () => {
+    expect(falVideoDuration("fal-ai/wan/v2.2/a14b/image-to-video", 3)).toBe(3);
+    expect(falVideoDuration("fal-ai/wan/v2.2/a14b/image-to-video")).toBe(5);
+  });
 });
 
 describe("openai adapter", () => {

@@ -1,7 +1,7 @@
 {
   "name": "unspooler",
   "version": "0.1.0",
-  "description": "Video-first game asset pipeline: prompt to game-ready sprite sheets with pluggable models, AI matting, and a movement-test studio.",
+  "description": "AI game asset pipeline: skeletal characters with a shared animation library and bone-attached equipment, plus video-first vfx/statics/tilesets — pluggable models, local baking, and a movement-test studio.",
   "license": "AGPL-3.0-only",
   "type": "module",
   "engines": {

@@ -27,7 +27,7 @@ import {
 const program = new Command();
 program
   .name("unspooler")
-  .description("Video-first game asset pipeline")
+  .description("AI game asset pipeline: skeletal characters with equippable items, plus video-first vfx/statics/tilesets")
   .version("0.1.0");
 
 program
@@ -207,6 +207,75 @@ program
         manifest: JSON.parse(manifestRaw),
         sheet,
         sheetFileName,
+        outDir,
+      });
+      for (const file of files) console.log(file.path);
+    }
+  });
+
+program
+  .command("bake")
+  .argument("<character>", "character asset id (must be built)")
+  .description("Re-bake a character's spritesheet locally, optionally wearing equipment — zero AI cost")
+  .option("-c, --config <path>", "config file")
+  .option("-e, --equip <ids>", "comma-separated equipment asset ids (must be built)", "")
+  .option("-o, --out <name>", "output basename (default: <character>+<items>)")
+  .action(async (characterId: string, opts: { config?: string; equip: string; out?: string }) => {
+    const cwd = process.cwd();
+    const config = await loadConfig(cwd, opts.config);
+    const outDir = resolveOutDir(config, cwd);
+    const asset = config.assets.find((a) => a.id === characterId);
+    if (!asset) throw new Error(`Unknown asset "${characterId}"`);
+    if (asset.type !== "character") throw new Error(`"${characterId}" is not a character`);
+
+    const { bakeClips, packSheet } = await import("./pipeline/index.js");
+    const { cellSize, resolveAnimations: anims, resolveDirections: dirs, resolveFps, exportTargets } =
+      await import("./config.js");
+
+    const rigRaw = await readFile(resolve(outDir, `${characterId}.rig.json`), "utf8").catch(() => null);
+    if (!rigRaw) throw new Error(`No rig for "${characterId}". Run \`unspooler build -a ${characterId}\` first.`);
+    const rig = JSON.parse(rigRaw);
+    const atlas = await readFile(resolve(outDir, rig.atlas));
+
+    const equipIds = opts.equip.split(",").map((s) => s.trim()).filter(Boolean);
+    const equipment = [];
+    for (const id of equipIds) {
+      const raw = await readFile(resolve(outDir, `${id}.equip.json`), "utf8").catch(() => null);
+      if (!raw) throw new Error(`No built equipment "${id}". Run \`unspooler build -a ${id}\` first.`);
+      const manifest = JSON.parse(raw);
+      const itemAtlas = await readFile(resolve(outDir, manifest.atlas));
+      equipment.push({ manifest, atlas: itemAtlas });
+    }
+
+    const clips = await bakeClips({
+      rig,
+      atlas,
+      equipment,
+      cell: cellSize(config),
+      fps: resolveFps(config, asset),
+      animations: anims(config, asset).map((a) => a.name),
+      directions: dirs(asset),
+      pixelNative: config.style.pixelNative,
+      palette: config.style.palette,
+    });
+
+    const name = opts.out ?? (equipIds.length ? `${characterId}+${equipIds.join("+")}` : characterId);
+    const imageName = `${name}.png`;
+    const packed = await packSheet({
+      asset: { ...asset, id: name },
+      clips,
+      cell: cellSize(config),
+      fps: resolveFps(config, asset),
+      anchorMode: "feet",
+      imageName,
+    });
+    for (const target of exportTargets(config)) {
+      const exporter = getExporter(target);
+      const files = await exporter.export({
+        asset: { ...asset, id: name },
+        manifest: packed.manifest,
+        sheet: packed.sheet,
+        sheetFileName: imageName,
         outDir,
       });
       for (const file of files) console.log(file.path);

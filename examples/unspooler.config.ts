@@ -15,11 +15,23 @@ export default defineConfig({
   },
   assets: [
     {
+      // Characters are skeletal: unspooler generates body parts once, rigs
+      // them to the standard humanoid skeleton, and bakes the animation
+      // library locally. No video generation, and items attach to bones.
       id: "hero",
       type: "character",
       prompt: "a cloaked adventurer",
-      animations: ["idle", "walk"],
+      animations: ["idle", "walk", "run", "attack"],
       directions: 4,
+    },
+    {
+      // Equipment attaches to a skeleton slot on any character.
+      // Try: unspooler bake hero --equip sword
+      id: "sword",
+      type: "equipment",
+      prompt: "a plain iron shortsword",
+      slot: "hand.main",
+      itemScale: 0.55,
     },
     {
       id: "potion",

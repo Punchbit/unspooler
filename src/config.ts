@@ -34,7 +34,7 @@ const animationSpecSchema = z.object({
 
 const assetSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(["character", "static", "vfx", "tileset"]),
+  type: z.enum(["character", "static", "vfx", "tileset", "equipment"]),
   prompt: z.string().min(1),
   references: z.array(z.string()).optional(),
   animations: z.array(z.union([z.string(), animationSpecSchema])).optional(),
@@ -50,6 +50,11 @@ const assetSchema = z.object({
       rows: z.number().int().positive(),
     })
     .optional(),
+  slot: z.enum(["head", "body", "hand.main", "hand.off", "feet"]).optional(),
+  equipMode: z.enum(["overlay", "replace"]).optional(),
+  gripOffset: z.object({ x: z.number(), y: z.number() }).optional(),
+  equipRotation: z.number().optional(),
+  itemScale: z.number().positive().max(2).optional(),
 });
 
 export const configSchema = z.object({
@@ -138,7 +143,7 @@ export function resolveFps(config: UnspoolerConfig, asset: AssetConfig, anim?: A
 }
 
 export function resolveAnimations(config: UnspoolerConfig, asset: AssetConfig): ResolvedAnimation[] {
-  if (asset.type === "static" || asset.type === "tileset") return [];
+  if (asset.type === "static" || asset.type === "tileset" || asset.type === "equipment") return [];
   const listed = asset.animations?.length
     ? asset.animations
     : asset.type === "vfx"
@@ -165,6 +170,15 @@ export function resolveDirections(asset: AssetConfig): Direction[] {
   if (count === 1) return ["down"];
   if (count === 8) return [...DIRECTIONS_8];
   return [...DIRECTIONS_4];
+}
+
+/**
+ * Which facings need generated parts art for a skeletal character (or
+ * equipment). Side art is drawn once (facing left) and mirrored for right.
+ */
+export function resolveFacings(asset: AssetConfig): Array<"down" | "side" | "up"> {
+  const count = asset.directions ?? (asset.type === "equipment" ? 4 : 4);
+  return count === 1 ? ["down"] : ["down", "side", "up"];
 }
 
 export function directionsToGenerate(asset: AssetConfig): Direction[] {

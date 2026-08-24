@@ -21,8 +21,14 @@ export interface ProjectPayload {
 
 export interface Artifact {
   id: string;
+  type: string;
+  slot: string | null;
   sheet: string | null;
   manifest: string | null;
+  rig: string | null;
+  rigAtlas: string | null;
+  equip: string | null;
+  equipAtlas: string | null;
 }
 
 export interface ProjectState {
@@ -34,6 +40,7 @@ export interface ProjectState {
         string,
         Record<string, { video?: string; loop?: { in: number; out: number }; matteVariant?: string }>
       >;
+      rig?: Record<string, Record<string, { pivot?: { x: number; y: number } }>>;
     }
   >;
 }

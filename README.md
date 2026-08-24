@@ -1,14 +1,24 @@
 # Unspooler
 
-Turn a prompt (and optional reference images) into game-ready 2D sprite sheets.
+Turn a prompt (and optional reference images) into game-ready 2D characters, sheets, and rigs.
 
-Unspooler is a local-first npm package for people vibe-coding games. It does not ask an image model to invent a 4×3 grid in one shot. It generates a reference, animates that reference as video, pulls frames, mattes them, locks a shared foot baseline, and writes a sheet plus a JSON manifest any engine can load.
+Unspooler is a local-first npm package for people vibe-coding games.
+
+**Characters are skeletal.** The AI draws the character's body parts once. Unspooler fits them to a standard humanoid skeleton with a built-in animation library (idle, walk, run, jump, attack, hurt, death), so every character you generate gets every animation immediately — bone data played locally, no per-animation generation cost. Equipment (swords, helmets, boots) attaches to named bones with the right z-order per facing, deterministically. Everything can be baked down to a plain spritesheet at zero AI cost.
 
 ```
-reference → video per animation → frames → AI matte → normalize → sheet + manifest
+character:  reference → parts sheets (3 facings) → segment → fit to skeleton
+            → rig.json + atlas  →  bake library clips → sheet + manifest
+equipment:  item art per facing → matte → item atlas + slot manifest
 ```
 
-Static props, VFX, and tilesets share the same config and skip the stages they do not need.
+**VFX, statics, and tilesets are video/image-first.** Organic one-off motion is what video models are great at:
+
+```
+vfx:     reference → video → frames → AI matte → normalize → sheet + manifest
+static:  reference → matte → trim → pack
+tileset: static path + seam check + optional grid slice
+```
 
 ## Install
 
@@ -63,8 +73,15 @@ export default defineConfig({
       id: "hero",
       type: "character",
       prompt: "a cloaked adventurer",
-      animations: ["idle", "walk", "attack"],
-      directions: 4, // generate down/left/up, flip left → right
+      animations: ["idle", "walk", "attack"], // from the built-in library — omit to get all 7
+      directions: 4, // parts drawn for down/side/up, side flipped for right
+    },
+    {
+      id: "sword",
+      type: "equipment",
+      prompt: "a plain iron shortsword",
+      slot: "hand.main", // head · body · hand.main · hand.off · feet
+      itemScale: 0.55, // item height as a fraction of character height
     },
     { id: "potion", type: "static", prompt: "a red health potion" },
     { id: "boom", type: "vfx", prompt: "a small explosion burst" },
@@ -77,10 +94,19 @@ export default defineConfig({
 
 | Type | Path |
 | --- | --- |
-| `character` | reference → video per animation × facing → frames → matte → foot-anchored normalize → pack |
+| `character` | reference → parts sheets per facing → segment → fit to skeleton → rig + atlas → local bake → pack |
+| `equipment` | item art per facing → matte → item atlas + slot manifest (attaches to any character) |
 | `static` | reference → matte → trim → pack |
-| `vfx` | video path, centroid-anchored, no facings |
+| `vfx` | reference → video → frames → matte → centroid-anchored normalize → pack |
 | `tileset` | static path + seam check + optional grid slice |
+
+### Characters: how the skeletal system works
+
+- **One skeleton, every character.** All characters rig to `unspooler-humanoid@1` (12 bones, 10 parts, 3 facings). That is what makes the animation library and the equipment format universal.
+- **Animations are data, not generations.** The core library ships with the package; adding an animation to a character costs nothing. Custom clips are plain keyframe files on the same bones.
+- **Equipment is deterministic.** A sword is a sprite following the `hand.R` bone with a grip offset — it points the right way in every frame of every animation by construction. Z-order per facing (behind the body facing up, in front facing down) is a data table on the skeleton, not detection.
+- **Bake anywhere.** `unspooler bake hero --equip sword,helmet` renders any character wearing any item set to an ordinary spritesheet, locally, in seconds. All exporters keep working.
+- **Fix once, not per frame.** The Studio's parts tab shows each segmented part with its bone pivot; click to correct a pivot, and the next build re-fits and re-bakes. Corrections persist in `state.json`.
 
 ### CLI
 
@@ -88,10 +114,11 @@ export default defineConfig({
 | --- | --- |
 | `unspooler init [--yes]` | Interactive setup (Enter keeps defaults) |
 | `unspooler build [--dry-run] [--yes] [-a id]` | Run the pipeline |
+| `unspooler bake <character> [--equip a,b]` | Re-bake a sheet locally, optionally wearing equipment — $0 |
 | `unspooler generate <asset> [--takes n]` | Re-roll the reference |
-| `unspooler animate <asset> <anim>` | Re-roll one video |
+| `unspooler animate <asset> <anim>` | Re-roll one vfx video |
 | `unspooler export <target>` | `generic` `phaser` `godot` `css` |
-| `unspooler studio` | Local UI: takes, frame scrub, WASD rig |
+| `unspooler studio` | Local UI: takes, frames, parts/pivot inspector, equip panel, WASD rig |
 
 ## Preferred models
 
@@ -164,18 +191,43 @@ Override per project, per asset, or per animation (`animations: [{ name: "walk",
 
 Each asset writes:
 
-- `assets/<id>.png` — packed sheet
+- `assets/<id>.png` — packed sheet (characters: baked from the rig)
 - `assets/<id>.json` — Aseprite / TexturePacker-shaped manifest (frame rects, anchors, fps, loop tags)
 
-Optional exporters:
+Characters also write:
+
+- `assets/<id>.rig.json` + `assets/<id>.rig.png` — rig manifest and parts atlas, the source of truth for runtimes
+- `assets/<id>.rig.tscn` (godot target) — Skeleton2D scene: Bone2D hierarchy, part sprites, AnimationPlayer with the full library
+- `assets/<id>.rig.html` (css target) — self-contained bone-runtime player with WASD, no dependencies
+
+Equipment writes `assets/<id>.equip.json` + `assets/<id>.equip.png`.
+
+Optional exporters (fed by the baked sheet, so they work for every asset type):
 
 - **phaser** — atlas JSON + `this.load.atlas` / `anims.create` snippet
-- **godot** — `SpriteFrames` `.tres`
+- **godot** — `SpriteFrames` `.tres` (plus the Skeleton2D scene for characters)
 - **css** — dependency-free sheet player for web games
 
-## Studio + controller
+## Studio + runtime
 
-`unspooler studio` is the human-in-the-loop surface: pick a reference take, scrub frames, and drive the character with WASD. The headless controller lives at `unspooler/controller` and is meant to be extracted into its own package once the binding (states, facings, anchors) has been used on real sheets.
+`unspooler studio` is the human-in-the-loop surface: pick a reference take, inspect segmented parts and correct bone pivots, preview any library clip, toggle equipment live, and drive the character with WASD.
+
+The dependency-free runtime lives at `unspooler/controller`: `CharacterController` (movement/state machine), `RigPlayer` (bone evaluation → back-to-front draw list), the `HUMANOID` skeleton, and the clip library. In a game:
+
+```ts
+import { CharacterController, RigPlayer } from "unspooler/controller";
+
+const player = new RigPlayer(rigManifest); // assets/hero.rig.json
+const hero = new CharacterController();
+hero.attachRig(player);
+hero.equip(swordManifest); // assets/sword.equip.json — follows the hand bone
+
+// per frame:
+const snap = hero.update(input, dtMs);
+for (const cmd of hero.drawList(scale)) {
+  /* draw cmd.frame from the atlas at (snap.x + cmd.x, snap.y + cmd.y), rotated cmd.rotation */
+}
+```
 
 ## Cache
 

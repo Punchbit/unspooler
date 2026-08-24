@@ -85,10 +85,20 @@ export function createStudioApp(ctx: {
     for (const asset of ctx.config.assets) {
       const sheet = join(ctx.outDir, `${asset.id}.png`);
       const manifest = join(ctx.outDir, `${asset.id}.json`);
+      const rig = join(ctx.outDir, `${asset.id}.rig.json`);
+      const rigAtlas = join(ctx.outDir, `${asset.id}.rig.png`);
+      const equip = join(ctx.outDir, `${asset.id}.equip.json`);
+      const equipAtlas = join(ctx.outDir, `${asset.id}.equip.png`);
       items.push({
         id: asset.id,
+        type: asset.type,
+        slot: asset.slot ?? null,
         sheet: existsSync(sheet) ? `/files/out/${asset.id}.png` : null,
         manifest: existsSync(manifest) ? `/files/out/${asset.id}.json` : null,
+        rig: existsSync(rig) ? `/files/out/${asset.id}.rig.json` : null,
+        rigAtlas: existsSync(rigAtlas) ? `/files/out/${asset.id}.rig.png` : null,
+        equip: existsSync(equip) ? `/files/out/${asset.id}.equip.json` : null,
+        equipAtlas: existsSync(equipAtlas) ? `/files/out/${asset.id}.equip.png` : null,
       });
     }
     return c.json(items);

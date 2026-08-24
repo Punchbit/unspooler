@@ -1,4 +1,6 @@
-export const ASSET_TYPES = ["character", "static", "vfx", "tileset"] as const;
+import type { RigOverrides, SlotName, Vec2 } from "./rig/types.js";
+
+export const ASSET_TYPES = ["character", "static", "vfx", "tileset", "equipment"] as const;
 export type AssetType = (typeof ASSET_TYPES)[number];
 
 export const STANDARD_ANIMATIONS = [
@@ -88,6 +90,20 @@ export interface AssetConfig {
   tileSize?: number;
   /** Tileset: columns × rows to slice after generation. */
   tileGrid?: { cols: number; rows: number };
+  /** Equipment: which slot on the standard skeleton this item occupies. */
+  slot?: SlotName;
+  /**
+   * Equipment composition mode. "overlay" (default) attaches the sprite to
+   * the slot's bone; "replace" hides base parts and draws this art instead
+   * (e.g. boots replacing feet).
+   */
+  equipMode?: "overlay" | "replace";
+  /** Equipment: extra offset from the slot's attachment point, in character-height units. */
+  gripOffset?: Vec2;
+  /** Equipment: extra rotation on top of the bone, radians. */
+  equipRotation?: number;
+  /** Equipment: item height as a fraction of character height (sword ≈ 0.6). */
+  itemScale?: number;
 }
 
 export interface ExportConfig {
@@ -257,6 +273,8 @@ export interface SelectedTake {
       }
     >
   >;
+  /** Studio pivot corrections for skeletal characters. */
+  rig?: RigOverrides;
 }
 
 export interface ProjectState {
@@ -276,6 +294,10 @@ export interface PlanStep {
     | "normalize"
     | "pack"
     | "tileset"
+    | "parts"
+    | "segment"
+    | "fit"
+    | "bake"
     | "export";
   cacheHit: boolean;
   cacheKey: string;
@@ -305,6 +327,9 @@ export interface BuildArtifact {
   sheetPath: string;
   manifestPath: string;
   exports: ExportedFile[];
+  /** Skeletal characters: rig manifest + parts atlas. Equipment: item manifest + atlas. */
+  rigPath?: string;
+  rigAtlasPath?: string;
 }
 
 export interface BuildResult {

@@ -19,7 +19,7 @@ const video: VideoGenerator = {
 };
 
 describe("cost plan", () => {
-  it("charges one video per generated facing, not mirrored ones", () => {
+  it("charges one parts sheet per facing for skeletal characters, no video", () => {
     const config = defineConfig({
       style: { prompt: "pixel" },
       models: { reference: image, video, matte: chromaKey() },
@@ -34,10 +34,38 @@ describe("cost plan", () => {
       ],
     });
     const plan = summarizePlan(planAsset(config, config.assets[0]!));
-    const videos = plan.steps.filter((s) => s.stage === "video");
-    expect(videos).toHaveLength(3);
-    expect(plan.estimatedUsd).toBeGreaterThan(1);
+    // 4 directions → 3 generated facings (down, side, up); right is mirrored.
+    expect(plan.steps.filter((s) => s.stage === "parts")).toHaveLength(3);
+    expect(plan.steps.filter((s) => s.stage === "video")).toHaveLength(0);
+    expect(plan.steps.some((s) => s.stage === "fit")).toBe(true);
+    expect(plan.steps.some((s) => s.stage === "bake")).toBe(true);
+    // 1 reference + 3 parts sheets at $0.1 each.
+    expect(plan.estimatedUsd).toBeCloseTo(0.4, 5);
     expect(plan.paidCalls).toBeGreaterThan(0);
+  });
+
+  it("only generates the down facing for single-direction characters", () => {
+    const config = defineConfig({
+      style: { prompt: "pixel" },
+      models: { reference: image, video, matte: chromaKey() },
+      assets: [{ id: "npc", type: "character", prompt: "npc", directions: 1 }],
+    });
+    const steps = planAsset(config, config.assets[0]!);
+    expect(steps.filter((s) => s.stage === "parts")).toHaveLength(1);
+  });
+
+  it("plans per-facing art + local fit for equipment", () => {
+    const config = defineConfig({
+      style: { prompt: "pixel" },
+      models: { reference: image, video, matte: chromaKey() },
+      assets: [
+        { id: "sword", type: "equipment", prompt: "an iron sword", slot: "hand.main" },
+      ],
+    });
+    const steps = planAsset(config, config.assets[0]!);
+    expect(steps.filter((s) => s.stage === "parts")).toHaveLength(3);
+    expect(steps.some((s) => s.stage === "video")).toBe(false);
+    expect(steps.some((s) => s.stage === "fit")).toBe(true);
   });
 
   it("skips the video stage for static assets", () => {

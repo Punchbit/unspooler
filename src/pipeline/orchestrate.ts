@@ -8,6 +8,7 @@ import {
   exportTargets,
   resolveAnimations,
   resolveDirections,
+  resolveFacings,
   resolveFps,
   resolveOutDir,
   resolveWorkDir,
@@ -33,6 +34,17 @@ import { packSheet, type PackedClip } from "./pack.js";
 import { generateReference } from "./reference.js";
 import { measureSeams, sliceTiles } from "./tileset.js";
 import { generateVideo } from "./video.js";
+import { generatePartsSheet } from "./parts.js";
+import { segmentParts, type SegmentedParts } from "./segment.js";
+import { fitToSkeleton } from "./fit.js";
+import { bakeClips } from "./bake.js";
+import { generateEquipmentArt, fitEquipment } from "./equipment.js";
+import { exportCssRig, exportGodotRig, exportRigGeneric } from "../exporters/rig.js";
+import { HUMANOID, facingsFor } from "../rig/skeleton.js";
+import type { Facing } from "../rig/types.js";
+
+/** Character height in atlas pixels that standalone equipment is fit against. */
+export const DEFAULT_RIG_PIXEL_HEIGHT = 512;
 
 export async function unspool(
   config: UnspoolerConfig,
@@ -100,6 +112,10 @@ async function buildAsset(
   const cell = cellSize(config);
   const fps = resolveFps(config, asset);
 
+  if (asset.type === "equipment") {
+    return buildEquipmentAsset(config, asset, { ...ctx, models });
+  }
+
   let reference: Buffer;
   if (selected.reference) {
     const { toBuffer } = await import("../media.js");
@@ -121,6 +137,16 @@ async function buildAsset(
       await ctx.cache.write(refKey, reference, "reference.png");
       await ctx.cache.saveTake(asset.id, "reference", `${Date.now()}.png`, reference);
     }
+  }
+
+  if (asset.type === "character") {
+    return buildRigAsset(config, asset, reference, {
+      ...ctx,
+      models,
+      selected,
+      cell,
+      fps,
+    });
   }
 
   const clips: PackedClip[] = [];
@@ -288,6 +314,239 @@ async function buildAsset(
     sheetPath,
     manifestPath,
     exports,
+  };
+}
+
+/**
+ * Skeletal character build: reference → per-facing parts sheets → segment →
+ * fit to the standard skeleton → write rig manifest + atlas → bake the
+ * animation library into a plain spritesheet locally → existing exporters.
+ */
+async function buildRigAsset(
+  config: UnspoolerConfig,
+  asset: AssetConfig,
+  reference: Buffer,
+  ctx: {
+    cache: Cache;
+    state: StateStore;
+    outDir: string;
+    cwd: string;
+    onStep?: (step: PlanStep) => void;
+    models: ReturnType<typeof resolveModels>;
+    selected: { rig?: import("../rig/types.js").RigOverrides };
+    cell: { w: number; h: number };
+    fps: number;
+  },
+): Promise<BuildArtifact> {
+  const chroma = resolveChromaMode(asset.chroma ?? config.chroma ?? "auto", config.style.palette);
+  const facings = facingsFor(asset.directions ?? 4);
+  const segmented: Partial<Record<Facing, SegmentedParts>> = {};
+
+  for (const facing of facings) {
+    ctx.onStep?.({
+      assetId: asset.id,
+      type: asset.type,
+      stage: "parts",
+      cacheHit: false,
+      cacheKey: "",
+      costUsd: 0,
+      providerId: ctx.models.reference.id,
+      label: `${asset.id} parts/${facing}`,
+    });
+    const partsKey = ctx.cache.key({
+      stage: "parts",
+      asset: asset.id,
+      facing,
+      prompt: asset.prompt,
+      style: config.style,
+      skeleton: `${HUMANOID.id}@${HUMANOID.version}`,
+      provider: ctx.models.reference.id,
+    });
+    let sheet = await ctx.cache.read(partsKey, "parts.png");
+    if (!sheet) {
+      sheet = await generatePartsSheet({
+        config,
+        asset,
+        skeleton: HUMANOID,
+        facing,
+        reference,
+        generator: ctx.models.reference,
+      });
+      await ctx.cache.write(partsKey, sheet, "parts.png");
+      await ctx.cache.saveTake(asset.id, `parts-${facing}`, `${Date.now()}.png`, sheet);
+    }
+    segmented[facing] = await segmentParts(sheet, {
+      skeleton: HUMANOID,
+      remover: ctx.models.matte,
+      chroma,
+      palette: config.style.palette,
+    });
+  }
+
+  const animations = resolveAnimations(config, asset).map((a) => a.name);
+  const atlasName = `${asset.id}.rig.png`;
+  const { atlas, manifest: rig } = await fitToSkeleton({
+    assetId: asset.id,
+    skeleton: HUMANOID,
+    facings: segmented,
+    fps: ctx.fps,
+    animations,
+    atlasName,
+    overrides: ctx.selected.rig,
+  });
+
+  await mkdir(ctx.outDir, { recursive: true });
+  const exports = [...(await exportRigGeneric({ assetId: asset.id, rig, atlas, outDir: ctx.outDir }))];
+
+  ctx.onStep?.({
+    assetId: asset.id,
+    type: asset.type,
+    stage: "bake",
+    cacheHit: false,
+    cacheKey: "",
+    costUsd: 0,
+    providerId: "local",
+    label: `${asset.id} bake spritesheet`,
+  });
+  const directions = resolveDirections(asset);
+  const clips = await bakeClips({
+    rig,
+    atlas,
+    cell: ctx.cell,
+    fps: ctx.fps,
+    animations,
+    directions,
+    pixelNative: config.style.pixelNative,
+    palette: config.style.palette,
+  });
+
+  const imageName = `${asset.id}.png`;
+  const packed = await packSheet({
+    asset,
+    clips,
+    cell: ctx.cell,
+    fps: ctx.fps,
+    anchorMode: "feet",
+    imageName,
+  });
+
+  const sheetPath = join(ctx.outDir, imageName);
+  const manifestPath = join(ctx.outDir, `${asset.id}.json`);
+  const targets = exportTargets(config);
+  for (const target of targets) {
+    const exporter = getExporter(target);
+    exports.push(
+      ...(await exporter.export({
+        asset,
+        manifest: packed.manifest,
+        sheet: packed.sheet,
+        sheetFileName: imageName,
+        outDir: ctx.outDir,
+      })),
+    );
+  }
+  if (!targets.includes("generic")) {
+    await writeFile(sheetPath, packed.sheet);
+    await writeFile(manifestPath, JSON.stringify(packed.manifest, null, 2));
+  }
+  if (targets.includes("godot")) {
+    exports.push(...(await exportGodotRig({ assetId: asset.id, rig, atlas, outDir: ctx.outDir })));
+  }
+  if (targets.includes("css")) {
+    exports.push(...(await exportCssRig({ assetId: asset.id, rig, atlas, outDir: ctx.outDir })));
+  }
+
+  return {
+    assetId: asset.id,
+    sheetPath,
+    manifestPath,
+    exports,
+    rigPath: join(ctx.outDir, `${asset.id}.rig.json`),
+    rigAtlasPath: join(ctx.outDir, atlasName),
+  };
+}
+
+/**
+ * Equipment build: per-facing item art → matte + trim + scale → item atlas
+ * and manifest. Attaching to a character is deterministic and free, so no
+ * per-character work happens here.
+ */
+async function buildEquipmentAsset(
+  config: UnspoolerConfig,
+  asset: AssetConfig,
+  ctx: {
+    cache: Cache;
+    outDir: string;
+    onStep?: (step: PlanStep) => void;
+    models: ReturnType<typeof resolveModels>;
+  },
+): Promise<BuildArtifact> {
+  const facings = facingsFor(asset.directions ?? 4);
+  const art: Partial<Record<Facing, Buffer>> = {};
+  const { toBuffer } = await import("../media.js");
+  const references = await Promise.all(
+    [...(config.style.references ?? []), ...(asset.references ?? [])].map((p) => toBuffer(p)),
+  );
+
+  for (const facing of facings) {
+    ctx.onStep?.({
+      assetId: asset.id,
+      type: asset.type,
+      stage: "parts",
+      cacheHit: false,
+      cacheKey: "",
+      costUsd: 0,
+      providerId: ctx.models.reference.id,
+      label: `${asset.id} equipment/${facing}`,
+    });
+    const key = ctx.cache.key({
+      stage: "equipment",
+      asset: asset.id,
+      facing,
+      prompt: asset.prompt,
+      style: config.style,
+      provider: ctx.models.reference.id,
+    });
+    let image = await ctx.cache.read(key, "item.png");
+    if (!image) {
+      image = await generateEquipmentArt({
+        config,
+        asset,
+        facing,
+        generator: ctx.models.reference,
+        references: references.length ? references : undefined,
+      });
+      await ctx.cache.write(key, image, "item.png");
+      await ctx.cache.saveTake(asset.id, `equipment-${facing}`, `${Date.now()}.png`, image);
+    }
+    art[facing] = image;
+  }
+
+  const atlasName = `${asset.id}.equip.png`;
+  const { atlas, manifest } = await fitEquipment({
+    asset,
+    facings: art,
+    remover: ctx.models.matte,
+    atlasName,
+    characterPixelHeight: DEFAULT_RIG_PIXEL_HEIGHT,
+  });
+
+  await mkdir(ctx.outDir, { recursive: true });
+  const atlasPath = join(ctx.outDir, atlasName);
+  const manifestPath = join(ctx.outDir, `${asset.id}.equip.json`);
+  await writeFile(atlasPath, atlas);
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+  return {
+    assetId: asset.id,
+    sheetPath: atlasPath,
+    manifestPath,
+    exports: [
+      { path: atlasPath, contents: atlas },
+      { path: manifestPath, contents: JSON.stringify(manifest, null, 2) },
+    ],
+    rigPath: manifestPath,
+    rigAtlasPath: atlasPath,
   };
 }
 

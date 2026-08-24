@@ -57,7 +57,7 @@ export const PREFERRED_MODELS = {
 } as const;
 
 export const DEFAULT_FPS = 12;
-export const DEFAULT_VIDEO_SECONDS = 3;
+export const DEFAULT_VIDEO_SECONDS = 5;
 export const DEFAULT_CELL = 256;
 export const DEFAULT_TAKES = 1;
 export const DEFAULT_COST_THRESHOLD = 1;
@@ -65,7 +65,19 @@ export const DEFAULT_WORK_DIR = ".unspooler";
 export const DEFAULT_OUT_DIR = "assets";
 export const DEFAULT_MIRROR = true;
 
-export const DEFAULT_CHARACTER_ANIMS = ["idle", "walk"] as const;
+/**
+ * Skeletal characters get the whole core library by default — animation is
+ * bone data played locally, so extra clips cost nothing to generate.
+ */
+export const DEFAULT_CHARACTER_ANIMS = [
+  "idle",
+  "walk",
+  "run",
+  "jump",
+  "attack",
+  "hurt",
+  "death",
+] as const;
 
 export const DIRECTION_PROMPTS: Record<string, string> = {
   down: "facing the camera, front view",

@@ -45,6 +45,8 @@ describe("dry-run", () => {
     expect(result.dryRun).toBe(true);
     expect(result.artifacts).toEqual([]);
     expect(result.plan.estimatedUsd).toBeGreaterThan(0);
-    expect(result.plan.steps.some((s) => s.stage === "video")).toBe(true);
+    // Skeletal characters generate parts sheets, never video.
+    expect(result.plan.steps.some((s) => s.stage === "parts")).toBe(true);
+    expect(result.plan.steps.some((s) => s.stage === "video")).toBe(false);
   });
 });

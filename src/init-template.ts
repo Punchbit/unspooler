@@ -25,6 +25,8 @@ export interface InitAnswers {
   assetPrompt: string;
   animations: string[];
   directions: 1 | 4 | 8;
+  /** Equipment assets only: which skeleton slot the item occupies. */
+  slot?: "head" | "body" | "hand.main" | "hand.off" | "feet";
 }
 
 export const DEFAULT_INIT: InitAnswers = {
@@ -43,7 +45,7 @@ export const DEFAULT_INIT: InitAnswers = {
   assetId: "hero",
   assetType: "character",
   assetPrompt: "a small adventurer in a brown cloak and leather boots",
-  animations: ["idle", "walk"],
+  animations: ["idle", "walk", "run", "jump", "attack", "hurt", "death"],
   directions: 4,
 };
 
@@ -60,7 +62,7 @@ const PROVIDER_ALIASES: Record<string, string> = {
 };
 const MATTES: InitMatte[] = ["chroma", "replicate"];
 const PRESETS: PresetName[] = ["draft", "preferred"];
-const ASSET_TYPES: AssetType[] = ["character", "static", "vfx", "tileset"];
+const ASSET_TYPES: AssetType[] = ["character", "static", "vfx", "tileset", "equipment"];
 const EXPORTS = ["generic", "phaser", "godot", "css"];
 const DIRECTIONS = [4, 8, 1] as const;
 
@@ -168,6 +170,9 @@ export function renderConfig(answers: InitAnswers): string {
   }
   if (answers.assetType === "character") {
     assetLines.push(`      directions: ${answers.directions},`);
+  }
+  if (answers.assetType === "equipment" && answers.slot) {
+    assetLines.push(`      slot: ${quote(answers.slot)},`);
   }
 
   return `import { ${[...imports].join(", ")} } from "unspooler";
@@ -302,7 +307,15 @@ export async function promptInit(ask: Ask, defaults: InitAnswers = DEFAULT_INIT)
 
   let animations = defaults.animations;
   let directions: 1 | 4 | 8 = defaults.directions;
-  if (assetType === "character" || assetType === "vfx") {
+  if (assetType === "character") {
+    console.log(
+      "    characters are skeletal: animations come from the built-in library (idle, walk, run, jump, attack, hurt, death) and bake locally at no AI cost",
+    );
+    animations = parseList(
+      await ask(`Animations [${defaults.animations.join(", ")}]: `),
+      defaults.animations,
+    );
+  } else if (assetType === "vfx") {
     animations = parseList(
       await ask(`Animations [${defaults.animations.join(", ")}]: `),
       defaults.animations,
@@ -314,6 +327,14 @@ export async function promptInit(ask: Ask, defaults: InitAnswers = DEFAULT_INIT)
     const dirRaw = await ask(`Directions [${defaults.directions}]: `);
     const parsed = parseNumber(dirRaw, defaults.directions);
     directions = (DIRECTIONS.includes(parsed as 1 | 4 | 8) ? parsed : defaults.directions) as 1 | 4 | 8;
+  }
+
+  let slot = defaults.slot;
+  if (assetType === "equipment") {
+    const slots = ["hand.main", "hand.off", "head", "body", "feet"] as const;
+    console.log("Slot");
+    console.log(numbered(slots as unknown as string[], "hand.main"));
+    slot = parseChoice(await ask(`Slot [hand.main]: `), slots, "hand.main");
   }
 
   const fps = parseNumber(await ask(`FPS [${defaults.fps}]: `), defaults.fps, 1);
@@ -340,5 +361,6 @@ export async function promptInit(ask: Ask, defaults: InitAnswers = DEFAULT_INIT)
     assetPrompt,
     animations,
     directions,
+    slot,
   };
 }

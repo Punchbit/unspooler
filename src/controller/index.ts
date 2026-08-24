@@ -1,5 +1,7 @@
 import type { Direction, SpriteManifest } from "../types.js";
 import { framesFor } from "../manifest.js";
+import { RigPlayer } from "../rig/player.js";
+import type { DrawCommand, EquipmentManifest, SlotName } from "../rig/types.js";
 
 export const CONTROLLER_STATES = [
   "idle",
@@ -76,11 +78,43 @@ export class CharacterController {
   grounded = true;
   private lockUntil = 0;
   private time = 0;
+  private rig?: RigPlayer;
+  /** Time since the current animation state began, for rig clip playback. */
+  private stateTime = 0;
 
   constructor(
     readonly manifest?: SpriteManifest,
     readonly config: ControllerConfig = {},
   ) {}
+
+  /** Drive a skeletal rig instead of (or alongside) a baked sheet. */
+  attachRig(player: RigPlayer): void {
+    this.rig = player;
+  }
+
+  getRig(): RigPlayer | undefined {
+    return this.rig;
+  }
+
+  /** Deterministic equipment: sprite follows the slot's bone, no detection. */
+  equip(item: EquipmentManifest): void {
+    if (!this.rig) throw new Error("No rig attached. Call attachRig(player) first.");
+    this.rig.equip(item);
+  }
+
+  unequip(slot: SlotName): void {
+    this.rig?.unequip(slot);
+  }
+
+  equipped(): EquipmentManifest[] {
+    return this.rig?.equipped() ?? [];
+  }
+
+  /** Back-to-front draw commands for the current state, from the attached rig. */
+  drawList(scale = 1): DrawCommand[] {
+    if (!this.rig) return [];
+    return this.rig.drawList(this.state, this.stateTime, this.direction, { scale });
+  }
 
   get walkSpeed(): number {
     return this.config.walkSpeed ?? 80;
@@ -93,6 +127,13 @@ export class CharacterController {
   }
 
   update(input: ControllerInput, dtMs: number): ControllerSnapshot {
+    const stateBefore = this.state;
+    const snap = this.step(input, dtMs);
+    this.stateTime = this.state === stateBefore ? this.stateTime + dtMs : 0;
+    return snap;
+  }
+
+  private step(input: ControllerInput, dtMs: number): ControllerSnapshot {
     this.time += dtMs;
     const allow8 = Boolean(
       this.manifest?.meta.frameTags.some((t) => t.name.includes("down-left")),
@@ -151,6 +192,7 @@ export class CharacterController {
   }
 
   private hasAnim(name: string): boolean {
+    if (this.rig) return this.rig.hasAnimation(name);
     if (!this.manifest) return true;
     return this.manifest.meta.frameTags.some(
       (t) => t.name === name || t.name.startsWith(`${name}-`),
@@ -170,6 +212,23 @@ export class CharacterController {
     };
   }
 }
+
+// Rig runtime re-exports: the controller entry is the dependency-free
+// runtime bundle, so the Studio and game code can import everything from it.
+export { RigPlayer } from "../rig/player.js";
+export { HUMANOID, facingFor, partZ } from "../rig/skeleton.js";
+export { CORE_CLIPS, CORE_CLIP_NAMES, getClip } from "../rig/animations/index.js";
+export { samplePose } from "../rig/pose.js";
+export type {
+  AnimationClip,
+  DrawCommand,
+  EquipmentManifest,
+  Facing,
+  PartName,
+  RigManifest,
+  SkeletonSpec,
+  SlotName,
+} from "../rig/types.js";
 
 export function bindKeys(held: Set<string>): ControllerInput {
   let ax = 0;

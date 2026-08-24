@@ -38,6 +38,20 @@ export {
   resolveModels,
 } from "./providers/index.js";
 export { registerExporter, getExporter, listExporters } from "./exporters/index.js";
+export { exportRigGeneric, exportGodotRig, exportCssRig } from "./exporters/rig.js";
+export * from "./rig/index.js";
+export {
+  generatePartsSheet,
+  segmentParts,
+  isolateLargestBlob,
+  fitToSkeleton,
+  bakeClips,
+  renderCommands,
+  generateEquipmentArt,
+  fitEquipment,
+  DEFAULT_RIG_PIXEL_HEIGHT,
+} from "./pipeline/index.js";
+export type { BakeOptions, EquippedArt } from "./pipeline/index.js";
 export { formatPlan, planAsset, summarizePlan } from "./cost.js";
 export { CharacterController, bindKeys, directionFromVector } from "./controller/index.js";
 export { PREFERRED_MODELS } from "./defaults.js";

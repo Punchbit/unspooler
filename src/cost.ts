@@ -23,6 +23,42 @@ export function planAsset(config: UnspoolerConfig, asset: AssetConfig): PlanStep
   const models = resolveModels(config, asset);
   const steps: PlanStep[] = [];
 
+  if (asset.type === "equipment") {
+    const facings = asset.directions === 1 ? ["down"] : ["down", "side", "up"];
+    for (const facing of facings) {
+      const key = cacheKeyFor({
+        stage: "equipment",
+        asset: asset.id,
+        facing,
+        prompt: asset.prompt,
+        style: config.style,
+        provider: models.reference.id,
+      });
+      steps.push({
+        assetId: asset.id,
+        type: asset.type,
+        stage: "parts",
+        cacheHit: false,
+        cacheKey: key,
+        costUsd: models.reference.estimate?.({ prompt: asset.prompt, takes: 1 }).usd ?? 0,
+        providerId: models.reference.id,
+        label: `${asset.id} equipment art/${facing} (${models.reference.id})`,
+      });
+      steps.push(
+        localOrPaid(
+          asset,
+          "segment",
+          cacheKeyFor({ stage: "equip-matte", asset: asset.id, facing }),
+          models.matte.id,
+          models.matte.estimate?.({ frames: [Buffer.alloc(0)] }).usd ?? 0,
+          `${asset.id} equipment matte/${facing} (${models.matte.id})`,
+        ),
+      );
+    }
+    steps.push(local(asset, "fit", cacheKeyFor({ stage: "equip-fit", asset: asset.id }), `${asset.id} equipment fit + atlas`));
+    return steps;
+  }
+
   const refKey = cacheKeyFor({
     stage: "reference",
     asset: asset.id,
@@ -42,7 +78,52 @@ export function planAsset(config: UnspoolerConfig, asset: AssetConfig): PlanStep
     label: `${asset.id} reference (${models.reference.id})`,
   });
 
-  if (asset.type === "static" || asset.type === "tileset") {
+  if (asset.type === "character") {
+    // Skeletal pipeline: parts sheets per facing, then everything local.
+    const facings = (asset.directions ?? 4) === 1 ? ["down"] : ["down", "side", "up"];
+    for (const facing of facings) {
+      const partsKey = cacheKeyFor({
+        stage: "parts",
+        asset: asset.id,
+        facing,
+        prompt: asset.prompt,
+        style: config.style,
+        skeleton: "unspooler-humanoid@1",
+        provider: models.reference.id,
+      });
+      steps.push({
+        assetId: asset.id,
+        type: asset.type,
+        stage: "parts",
+        cacheHit: false,
+        cacheKey: partsKey,
+        costUsd: models.reference.estimate?.({ prompt: asset.prompt, takes: 1 }).usd ?? 0,
+        providerId: models.reference.id,
+        label: `${asset.id} parts sheet/${facing} (${models.reference.id})`,
+      });
+      steps.push(
+        localOrPaid(
+          asset,
+          "segment",
+          cacheKeyFor({ stage: "segment", asset: asset.id, facing }),
+          models.matte.id,
+          models.matte.estimate?.({ frames: [Buffer.alloc(0)] }).usd ?? 0,
+          `${asset.id} segment/${facing} (${models.matte.id})`,
+        ),
+      );
+    }
+    steps.push(local(asset, "fit", cacheKeyFor({ stage: "fit", asset: asset.id }), `${asset.id} skeleton fit + rig atlas`));
+    const animCount = resolveAnimations(config, asset).length;
+    steps.push(
+      local(
+        asset,
+        "bake",
+        cacheKeyFor({ stage: "bake", asset: asset.id }),
+        `${asset.id} bake ${animCount} animation(s) × ${resolveDirections(asset).length} direction(s)`,
+      ),
+    );
+    steps.push(local(asset, "pack", cacheKeyFor({ stage: "pack", asset: asset.id }), `${asset.id} pack`));
+  } else if (asset.type === "static" || asset.type === "tileset") {
     const matteKey = cacheKeyFor({ stage: "matte", asset: asset.id, ref: refKey, provider: models.matte.id });
     steps.push(localOrPaid(asset, "matte", matteKey, models.matte.id, models.matte.estimate?.({ frames: [Buffer.alloc(0)] }).usd ?? 0, `${asset.id} matte`));
     if (asset.type === "tileset") {

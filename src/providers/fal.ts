@@ -25,6 +25,23 @@ function inferKind(model: string, kind?: "image" | "video"): "image" | "video" {
     : "image";
 }
 
+/** Kling only accepts duration "5" | "10". Other fal video models take a number. */
+export function falVideoDuration(model: string, seconds?: number): string | number {
+  const n = seconds ?? 5;
+  if (/kling/i.test(model)) return n <= 5 ? "5" : "10";
+  return n;
+}
+
+function formatFalError(err: unknown): string {
+  if (!err || typeof err !== "object") return String(err);
+  const e = err as Record<string, unknown>;
+  const body = e.body ?? e.data ?? e.response;
+  const msg = typeof e.message === "string" ? e.message : "fal request failed";
+  if (!body) return msg;
+  const detail = typeof body === "string" ? body : JSON.stringify(body);
+  return `${msg}: ${detail.slice(0, 400)}`;
+}
+
 async function falClient(apiKey?: string) {
   const { fal } = await import("@fal-ai/client");
   const key = apiKey ?? process.env.FAL_KEY ?? process.env.FAL_API_KEY;
@@ -139,19 +156,26 @@ export function falVideo(model: string, options: FalOptions = {}): VideoGenerato
     async generate(input: VideoGenInput): Promise<VideoGenResult> {
       const fal = await falClient(options.apiKey);
       const image = await toBuffer(input.image);
-      const imageUrl = toDataUrl(image, guessImageMime(image));
+      const uploaded = await fal.storage.upload(
+        new Blob([new Uint8Array(image)], { type: guessImageMime(image) }),
+      );
+      const imageUrl = typeof uploaded === "string" ? uploaded : (uploaded as { url: string }).url;
       const payload: Record<string, unknown> = {
         prompt: input.prompt,
         image_url: imageUrl,
-        duration: input.duration ?? 5,
+        duration: falVideoDuration(model, input.duration),
         ...options.input,
       };
-      const result = await fal.subscribe(model, { input: payload });
-      const url = firstUrl(result.data);
-      if (!url) {
-        throw new Error(`fal ${model} returned no video URL. Raw: ${JSON.stringify(result.data).slice(0, 400)}`);
+      try {
+        const result = await fal.subscribe(model, { input: payload });
+        const url = firstUrl(result.data);
+        if (!url) {
+          throw new Error(`fal ${model} returned no video URL. Raw: ${JSON.stringify(result.data).slice(0, 400)}`);
+        }
+        return { video: await downloadToBuffer(url), contentType: "video/mp4", model };
+      } catch (err) {
+        throw new Error(`fal ${model}: ${formatFalError(err)}`);
       }
-      return { video: await downloadToBuffer(url), contentType: "video/mp4", model };
     },
   };
 }
